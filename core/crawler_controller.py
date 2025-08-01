@@ -1,4 +1,4 @@
-from PySide6.QtCore import Signal, QObject, QTimer
+from PySide6.QtCore import Signal, QObject
 import asyncio
 import queue
 import threading
@@ -15,10 +15,6 @@ class CrawlerController(QObject):
         super().__init__()
         self.is_running = False
         self.result_queue = queue.Queue()  # 使用队列存储爬虫数据
-        
-        # 深度序号跟踪
-        self.current_depth = "1"
-        self.depth_counters = {"1": 0}
         self.depth_to_row = {}  # 用于存储深度和行号的映射关系
         
         # 爬虫相关
@@ -38,10 +34,8 @@ class CrawlerController(QObject):
         # 清空结果队列
         self.result_queue = queue.Queue()
         
-        # 重置深度序号跟踪
-        self.current_depth = "1"
-        self.depth_counters = {"1": 0}
-        self.depth_to_row = {}  # 重置深度到行号的映射
+        # 重置深度到行号的映射
+        self.depth_to_row = {}
         
         # 获取配置参数
         start_url = config.get("start_url", "https://example.com")

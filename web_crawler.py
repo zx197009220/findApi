@@ -64,7 +64,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
             url,urlProperty = await request_queue.get()
             if url is None:
                 break  # 接收到 None 作为停止信号
-            urlFuzz, depth = urlProperty
+            urlFuzz, depth,regex_names = urlProperty
             if len(depth.split(".")) > int(crawler_MaxDepth):
                 continue
             if url in url_completed:
@@ -99,7 +99,8 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                         'type': urlFuzz,
                         'response_time': round(response_time, 2),
                         'content_type': response.headers.get('Content-Type', 'unknown'),
-                        'size': len(response.text)
+                        'size': len(response.text),
+                        'regex_names': regex_names
                     }
                     await ui_queue.put(ui_data)
                 
@@ -112,6 +113,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                         'url': url,
                         'depth': depth,
                         'type': urlFuzz,
+                        'regex_names': regex_names,
                         'error': f"服务器协议中断: {str(rpe)}"
                     })
             except ConnectError as ce:
@@ -122,6 +124,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                         'url': url,
                         'depth': depth,
                         'type': urlFuzz,
+                        'regex_names': regex_names,
                         'error': f"网络层异常: {str(ce)}"
                     })
             except ReadTimeout as ce:
@@ -132,6 +135,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                         'url': url,
                         'depth': depth,
                         'type': urlFuzz,
+                        'regex_names': regex_names,
                         'error': f"连接层异常: {str(ce)}"
                     })
             except Exception as e:
@@ -142,6 +146,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                         'url': url,
                         'depth': depth,
                         'type': urlFuzz,
+                        'regex_names': regex_names,
                         'error': f"其他异常: {str(e)}"
                     })
             finally:
@@ -225,13 +230,13 @@ async def main(start_url, method, ui_queue=None, max_depth=None, timeout=None, u
 
     # 初始化队列和任务
     if isinstance(start_url,str):
-        await request_queue.put((start_url,("source","1")))
+        await request_queue.put((start_url,("source","1","N")))
 
     if isinstance(start_url,list):
         depth = 0
         for url in start_url:
             depth +=1
-            await request_queue.put((url,("source",f"{depth}")))
+            await request_queue.put((url,("source",f"{depth}","N")))
 
     event = asyncio.Event()
 

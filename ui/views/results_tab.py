@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
+    QWidget, QVBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QHeaderView,
     QPushButton, QLabel, QLineEdit, QFileDialog,
-    QMenu, QMessageBox, QApplication
+    QMenu, QMessageBox, QApplication, QHBoxLayout
 )
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QCursor, QAction
@@ -48,6 +48,7 @@ class ResultsTab(QWidget):
         self.links_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.links_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.links_table.customContextMenuRequested.connect(self.show_links_context_menu)
+        self.links_table.doubleClicked.connect(self.copy_selected_link_url)
 
         links_layout.addWidget(links_label)
         links_layout.addWidget(self.links_table)
@@ -67,6 +68,7 @@ class ResultsTab(QWidget):
         self.apis_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.apis_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.apis_table.customContextMenuRequested.connect(self.show_apis_context_menu)
+        self.apis_table.doubleClicked.connect(self.copy_selected_api_url)
 
         apis_layout.addWidget(apis_label)
         apis_layout.addWidget(self.apis_table)
@@ -180,14 +182,10 @@ class ResultsTab(QWidget):
         copy_url_action = QAction("复制URL", self)
         copy_url_action.triggered.connect(self.copy_selected_link_url)
 
-        open_url_action = QAction("在浏览器中打开", self)
-        open_url_action.triggered.connect(self.open_selected_link)
-
         delete_action = QAction("删除", self)
         delete_action.triggered.connect(self.delete_selected_link)
 
         menu.addAction(copy_url_action)
-        menu.addAction(open_url_action)
         menu.addSeparator()
         menu.addAction(delete_action)
 
@@ -225,15 +223,6 @@ class ResultsTab(QWidget):
             url = self.links_table.item(row, 0).text()
             QApplication.clipboard().setText(url)
 
-    def open_selected_link(self):
-        """在浏览器中打开选中的链接"""
-        selected_rows = self.links_table.selectionModel().selectedRows()
-        if selected_rows:
-            row = selected_rows[0].row()
-            url = self.links_table.item(row, 0).text()
-            # 这里应该实现在浏览器中打开URL的逻辑
-            # 暂时不实现，等待后续开发
-
     def delete_selected_link(self):
         """删除选中的链接"""
         selected_rows = self.links_table.selectionModel().selectedRows()
@@ -256,17 +245,6 @@ class ResultsTab(QWidget):
             row = selected_rows[0].row()
             params = self.apis_table.item(row, 2).text()
             QApplication.clipboard().setText(params)
-
-    def test_selected_api(self):
-        """测试选中的API"""
-        selected_rows = self.apis_table.selectionModel().selectedRows()
-        if selected_rows:
-            row = selected_rows[0].row()
-            url = self.apis_table.item(row, 0).text()
-            method = self.apis_table.item(row, 1).text()
-            params = self.apis_table.item(row, 2).text()
-            # 这里应该实现测试API的逻辑
-            # 暂时不实现，等待后续开发
 
     def delete_selected_api(self):
         """删除选中的API"""

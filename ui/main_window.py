@@ -1,14 +1,10 @@
 from PySide6.QtWidgets import (
-    QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QStatusBar,
+    QMainWindow, QVBoxLayout, QWidget, QStatusBar,
     QTabWidget
 )
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Signal
 from ui.views import CrawlerTab, ConfigSettingsTab
 from ui.views.rules_tab import RulesTab
-
-# 调试时使用模拟爬虫控制器
-# from core.mock_crawler_controller import MockCrawlerController as CrawlerController
-# 正式使用时切换回真实爬虫控制器
 from core.crawler_controller import CrawlerController
 
 class MainWindow(QMainWindow):
