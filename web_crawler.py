@@ -10,13 +10,12 @@ from urllib3.util.retry import Retry
 from httpx import RemoteProtocolError, ConnectError, ReadTimeout
 from link_extractor import parse_links
 from messageparse import message
-from config import crawler_MaxDepth,crawler_Proxies,crawler_MaxRetries
+from config import config
 
 
 loggerRequest = setup_logger('requestlog', 'requestlog.log')
 # 去除url上下文
 re_remove_url_context = re.compile(r"(https?://[^/]+)/[^/]+(/.*)")
-# re_remove_url_context = re.compile(regex_RemoveUrlContext)
 
 
 url_completed = set()
@@ -30,6 +29,7 @@ data = gic.body
 async def network_request(request_queue, process_queue, method="get", ui_queue=None):
     """
     网络请求函数
+    :param proxies: 代理配置，None表示不使用代理
     :param request_queue: 请求队列
     :param process_queue: 处理队列
     :param method: 请求方法
@@ -49,7 +49,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
     )
     # 创建一个重试策略
     retries = Retry(
-        total=3,  # 最大重试次数
+        total=config.crawler_max_retries,  # 最大重试次数
         backoff_factor=2,  # 重试间隔（秒）
         status_forcelist=[429, 500, 502, 503, 504],  # 需要重试的状态码
         allowed_methods=["GET", "POST"],  # 允许重试的 HTTP 方法
@@ -58,14 +58,14 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
 
     # 防止同时发起过多请求导致服务端压力
     transport = httpx.AsyncHTTPTransport(retries=retries)
-
-    async with httpx.AsyncClient(proxy="http://127.0.0.1:8080",headers=headers, timeout=timeout_config,transport=transport, verify=False) as client:
+    proxies = config.crawler_proxies if config.crawler_proxy_switch else None
+    async with httpx.AsyncClient(proxy=proxies, headers=headers, timeout=timeout_config, transport=transport, verify=False) as client:
         while True:
             url,urlProperty = await request_queue.get()
             if url is None:
                 break  # 接收到 None 作为停止信号
             urlFuzz, depth,regex_names = urlProperty
-            if len(depth.split(".")) > int(crawler_MaxDepth):
+            if len(depth.split(".")) > int(config.crawler_max_depth):
                 continue
             if url in url_completed:
                 request_queue.task_done()
@@ -100,8 +100,9 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                         'response_time': round(response_time, 2),
                         'content_type': response.headers.get('Content-Type', 'unknown'),
                         'size': len(response.text),
-                        'regex_names': regex_names
+                        'regex_names': regex_names,
                     }
+                    print(f"正在向UI队列发送数据: {ui_data}")  # 调试日志
                     await ui_queue.put(ui_data)
                 
                 await process_queue.put((response.text,url,depth))  # 存放(url, response_content)
@@ -200,7 +201,7 @@ async def monitor_queues(process_queue, request_queue,event):
 
         await asyncio.sleep(1)  # 短暂休眠后再次检查
 
-async def main(start_url, method, ui_queue=None, max_depth=None, timeout=None, user_agent=None):
+async def main(start_url, method, ui_queue=None, max_depth=None, timeout=None, user_agent=None, proxies=None):
     """
     爬虫主函数
     :param start_url: 起始URL或URL列表
@@ -209,22 +210,14 @@ async def main(start_url, method, ui_queue=None, max_depth=None, timeout=None, u
     :param max_depth: 爬取深度，默认为None（使用配置文件中的值）
     :param timeout: 请求超时时间，默认为None（使用默认超时配置）
     :param user_agent: 用户代理，默认为None（使用默认用户代理）
+    :param proxy: 代理服务器，默认为None（使用配置文件中的值）
     :return:
     """
-    # 如果提供了max_depth参数，更新全局配置
-    global crawler_MaxDepth
-    if max_depth is not None:
-        crawler_MaxDepth = str(max_depth)
-    
-    # 如果提供了user_agent参数，更新headers
-    global headers
-    if user_agent is not None and headers is not None:
-        headers['User-Agent'] = user_agent
-    
+
     # 如果提供了timeout参数，更新timeout配置
     # 注意：这里没有直接修改timeout_config，因为它是在network_request函数内部定义的
     # 如果需要修改timeout，应该在network_request函数中添加相应的逻辑
-    
+
     request_queue = asyncio.Queue()
     process_queue = asyncio.Queue()
 
@@ -282,16 +275,14 @@ if __name__ == '__main__':
     print(len(url_completed))
 
 # 提供一个函数，供外部调用时创建并传递UI队列
-def run_crawler_with_ui_queue(start_url, method="GET", max_depth=None, timeout=None, user_agent=None):
+def run_crawler_with_ui_queue(start_url, result_queue=None, reset_state=True):
     """
     使用UI队列运行爬虫
     
     Args:
-        start_url: 起始URL或URL列表
-        method: HTTP请求方法，默认为GET
-        max_depth: 爬取深度，默认为None（使用配置文件中的值）
-        timeout: 请求超时时间，默认为None（使用默认超时配置）
-        user_agent: 用户代理，默认为None（使用默认用户代理）
+        start_url: 起始URL或URL列表，从UI传入
+        result_queue: 结果队列，用于接收爬取结果
+        reset_state: 是否重置爬虫状态，默认为True
         
     Returns:
         ui_queue: 包含爬虫数据的队列，格式为：
@@ -307,19 +298,21 @@ def run_crawler_with_ui_queue(start_url, method="GET", max_depth=None, timeout=N
             }
         crawler_task: 爬虫任务，可以用于等待爬虫完成
     """
+    # 重置爬虫状态
+    if reset_state:
+        global url_completed
+        url_completed = set()
+
     async def run_with_queue():
         ui_queue = asyncio.Queue()
-        # 创建一个任务来运行主爬虫函数，传递所有参数
+        # 创建一个任务来运行主爬虫函数
         crawler_task = asyncio.create_task(main(
-            start_url, 
-            method, 
-            ui_queue, 
-            max_depth, 
-            timeout, 
-            user_agent
+            start_url=start_url,
+            method="GET",
+            ui_queue=ui_queue
         ))
         # 返回队列和任务，让调用者可以从队列中获取数据并等待任务完成
         return ui_queue, crawler_task
-    
+
     # 返回协程，让调用者可以在自己的事件循环中运行
     return run_with_queue()

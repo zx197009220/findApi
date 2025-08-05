@@ -1,11 +1,12 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QSplitter,
-    QTreeWidget, QTreeWidgetItem, QMenu
+    QTreeWidget, QTreeWidgetItem, QMenu, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal, Slot, QDateTime
 from PySide6.QtGui import QGuiApplication, QAction
-import queue  # 导入queue模块以使用queue.Empty异常
+from datetime import datetime  # 导入datetime模块
+from config import config
 
 class CrawlerTab(QWidget):
     """爬虫标签页，包含爬虫控制界面、结果显示表格和链接树状预览"""
@@ -29,26 +30,21 @@ class CrawlerTab(QWidget):
         self.crawler_controller.status_changed_signal.connect(self.update_status)
         # 日志信号 (级别, 消息, 时间戳)
         self.crawler_controller.log_signal.connect(self.add_log)
+        # 数据接收信号 - 直接处理爬虫数据
+        self.crawler_controller.data_received_signal.connect(self.process_crawler_data)
 
         # 连接UI信号到控制器
         self.start_button.clicked.connect(self.start_crawler)
         self.stop_button.clicked.connect(self.stop_crawler)
 
-        # 创建定时器来检查结果队列
+        # 不再使用定时器轮询队列，改为通过信号触发
+        # 但仍然保留queue_timer相关代码以便在需要时可以恢复
+        """
         from PySide6.QtCore import QTimer
         self.queue_timer = QTimer(self)
         self.queue_timer.timeout.connect(self.process_result_queue)
         self.queue_timer.start(100)  # 每100毫秒检查一次队列
-
-    def init_ui(self):
-        """初始化UI组件"""
-        # 创建主布局
-        self.main_layout = QVBoxLayout()
-        self.main_layout.setContentsMargins(10, 10, 10, 10)
-        self.main_layout.setSpacing(10)
-        self.setLayout(self.main_layout)  # 显式设置布局到窗口
-        
-        print("UI初始化开始...")  # 调试输出
+        """
 
     def create_link_tree_context_menu(self, position):
         """创建链接树的上下文菜单"""
@@ -78,7 +74,7 @@ class CrawlerTab(QWidget):
         self.main_layout.setSpacing(10)
         self.setLayout(self.main_layout)  # 显式设置布局到窗口
         
-        print("UI初始化开始...")  # 调试输出
+
 
         # 创建顶部控制区域
         top_control_widget = QWidget()
@@ -91,6 +87,10 @@ class CrawlerTab(QWidget):
         self.url_input.setPlaceholderText("请输入起始URL (例如: https://example.com)")
         self.url_input.setMinimumWidth(400)
 
+        # 创建代理启用复选框
+        self.proxy_checkbox = QCheckBox("启用代理")
+        self.proxy_checkbox.setChecked(False)  # 默认启用代理
+
         # 创建启动和停止按钮
         self.start_button = QPushButton("开始爬取")
         self.start_button.setMinimumWidth(100)
@@ -101,6 +101,7 @@ class CrawlerTab(QWidget):
         # 将控件添加到顶部布局
         top_layout.addWidget(url_label)
         top_layout.addWidget(self.url_input, 1)
+        top_layout.addWidget(self.proxy_checkbox)
         top_layout.addWidget(self.start_button)
         top_layout.addWidget(self.stop_button)
 
@@ -112,16 +113,16 @@ class CrawlerTab(QWidget):
 
         # 创建爬取结果表格
         results_widget = QWidget()
-        print(f"results_widget 创建成功: {results_widget}")  # 调试输出
+
         results_layout = QVBoxLayout(results_widget)
         results_layout.setContentsMargins(0, 0, 0, 0)
 
         results_label = QLabel("爬取结果:")
         results_layout.addWidget(results_label)
-        print(f"results_label 添加成功: {results_label}")  # 调试输出
+
 
         self.results_table = QTableWidget()
-        print(f"results_table 创建成功: {self.results_table}")  # 调试输出
+
         self.results_table.setColumnCount(6)
         self.results_table.setHorizontalHeaderLabels(["时间", "深度序号", "响应状态", "链接来源","规则","URL"])
         self.results_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)  # URL列自动拉伸
@@ -138,11 +139,11 @@ class CrawlerTab(QWidget):
 
         # 创建树状预览区域
         preview_group = QGroupBox("链接树状预览")
-        print(f"preview_group 创建成功: {preview_group}")  # 调试输出
+
         preview_layout = QVBoxLayout()
 
         self.link_tree = QTreeWidget()
-        print(f"link_tree 创建成功: {self.link_tree}")  # 调试输出
+
         self.link_tree.setHeaderLabel("链接层级")
         self.link_tree.setColumnCount(1)
         
@@ -151,9 +152,7 @@ class CrawlerTab(QWidget):
         self.link_tree.customContextMenuRequested.connect(self.create_link_tree_context_menu)
 
         preview_layout.addWidget(self.link_tree)
-        print(f"link_tree 添加到布局: {self.link_tree}")  # 调试输出
         preview_group.setLayout(preview_layout)
-        print(f"preview_group 布局设置完成: {preview_group}")  # 调试输出
 
         # 将树状预览区域添加到分割器
         self.splitter.addWidget(preview_group)
@@ -162,16 +161,10 @@ class CrawlerTab(QWidget):
         self.splitter.setSizes([600, 400])
 
         # 将分割器添加到主布局
-        print(f"准备添加分割器到主布局: {self.splitter}")  # 调试输出
         self.main_layout.addWidget(self.splitter, 1)
-        print(f"分割器已添加到主布局: {self.splitter}")  # 调试输出
 
         # 连接信号和槽
         self.results_table.itemClicked.connect(self.show_item_details)
-        
-        # 添加窗口显示后的调试
-        print("UI初始化完成，所有控件已添加到布局")  # 调试输出
-        print(f"主布局子控件数量: {self.main_layout.count()}")  # 调试输出
         
         # 连接爬虫控制信号
         self.connect_crawler_signals()
@@ -194,20 +187,23 @@ class CrawlerTab(QWidget):
         self.clear_results()
 
         # 获取配置选项
-        config = {
-            'start_url': url,
-            'max_depth': 3,
-            'timeout': 10,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        config.set('CRAWLER', 'ProxySwitch', self.proxy_checkbox.isChecked())
 
         # 调用爬虫控制器的启动方法
-        self.crawler_controller.start_crawler(config)
+        self.crawler_controller.start_crawler(url)
 
     def stop_crawler(self):
         """停止爬取"""
-        # 调用爬虫控制器的停止方法
-        self.crawler_controller.stop_crawler()
+        try:
+            # 调用爬虫控制器的停止方法
+            self.crawler_controller.stop_crawler()
+        except Exception as e:
+            # 记录错误并更新状态
+            self.update_status(f"停止爬虫时出错: {str(e)}")
+            # 确保按钮状态正确
+            self.start_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+
 
     def update_status(self, status):
         """更新爬虫状态"""
@@ -215,12 +211,13 @@ class CrawlerTab(QWidget):
         self.status_changed_signal.emit(status)
 
         # 根据状态更新按钮状态
-        if status.startswith("已停止") or status.startswith("完成"):
+        if status.startswith("已停止") or status.startswith("完成") or status == "爬虫已停止":
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
-        elif status.startswith("正在爬取"):
+        elif status.startswith("正在爬取") or status == "爬虫已启动":
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
+
 
     def add_log(self, level, message, timestamp):
         """添加日志消息"""
@@ -308,38 +305,16 @@ class CrawlerTab(QWidget):
 
 
 
-    def process_result_queue(self):
-        """处理结果队列中的项目"""
-        # 处理队列中的所有数据
-        while True:
-            try:
-                # 尝试使用队列的get方法
-                result = self.crawler_controller.result_queue.get(block=False)
 
-                # 直接使用模拟数据中的深度
-                depth = result.get('depth')
-
-                # 获取URL
-                url = result.get('url')
-
-                # 获取状态码
-                status_code = result.get('status')
-
-                # 获取类型
-                type = result.get('type')
-
-                regex_names = result.get('regex_names')
-
-                # 添加到UI
-                self.add_link_result(url, status_code, type, depth, regex_names)
-
-            except queue.Empty:
-                # 队列为空，退出循环
-                break
-            except Exception as e:
-                # 处理其他异常情况
-                print(f"处理结果队列时出错: {str(e)}")
-                break
+    def stop_queue_timer(self):
+        """停止队列处理定时器"""
+        try:
+            if hasattr(self, 'queue_timer'):
+                self.queue_timer.stop()
+                self.queue_timer.deleteLater()
+                del self.queue_timer
+        except Exception as e:
+            print(f"停止队列定时器时出错: {str(e)}")
 
     def generate_depth_number(self):
         """生成深度序号，形如1.2.1"""
@@ -367,10 +342,26 @@ class CrawlerTab(QWidget):
         self.depth_counters = {"1": 0}
         self.current_parent = "1"
 
+    def process_crawler_data(self, data):
+        """直接处理从爬虫接收到的数据"""
+        try:
+            # 获取数据字段
+            url = data.get('url', '')
+            status_code = data.get('status', 'N/A')
+            depth = data.get('depth', '1')
+            type = data.get('type', 'unknown')
+            regex_names = data.get('regex_names', [])
+            
+            # 添加到UI
+            self.add_link_result(url, status_code, type, depth, regex_names)
+            
+        except Exception as e:
+            self.add_log("ERROR", f"处理爬虫数据时出错: {e}", datetime.now().isoformat())
+
     def copy_selected_url(self, index):
         """双击复制选中行的URL到剪贴板"""
-        if index.column() == 4:  # 只在双击URL列时复制
-            url_item = self.results_table.item(index.row(), 4)
+        if index.column() == 5:  # 只在双击URL列时复制
+            url_item = self.results_table.item(index.row(), 5)  # 修正URL列索引为5
             if url_item:
                 from PySide6.QtGui import QGuiApplication
                 clipboard = QGuiApplication.clipboard()
