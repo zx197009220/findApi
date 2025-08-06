@@ -137,15 +137,70 @@ user_agent = Mozilla/5.0
 编辑`rules.yml`文件定义自定义爬取规则：
 
 ```yaml
-api_patterns:
-  - path: "/api/"
-  - path: "/v1/"
-  - regex: "\\.json$"
+rules:
+  - group: FindLink
+    rule:
+      - name: api_endpoints
+        f_regex: '(https?://[^/]+)(/api/v\d/[^\s\'"]+)'
+      - name: json_endpoints
+        f_regex: '(https?://[^/]+/[^\s\'"]+\.json)'
+  
+  - group: excludeLink
+    rule:
+      - name: static_resources
+        f_regex: '\.(css|png|jpg|jpeg|gif|ico|woff2?)$'
+      - name: admin_pages
+        f_regex: '/admin/'
+```
 
-exclude_patterns:
-  - path: "/admin/"
-  - path: "/login"
-  - regex: "\\.png$"
+### 参数模糊测试
+启用`config.ini`中的`ParamSwitch`选项，并配置`paramdict.yml`文件：
+
+```yaml
+parameters:
+  - name: SQLi
+    values: ["'", "1=1", "OR 1=1"]
+  - name: XSS
+    values: ["<script>alert(1)</script>", "<img src=x onerror=alert(1)>"]
+```
+
+### 消息解析功能
+`messageparse.py`模块提供以下高级功能：
+- 自动解析HTTP请求/响应报文
+- 支持正则替换报文内容
+- 处理multipart/form-data
+- 自动解压缩gzip/deflate内容
+
+使用示例：
+```python
+from messageparse import parse_http_message
+
+# 解析HTTP请求
+request = parse_http_message(raw_request)
+print(request.headers)
+print(request.body)
+
+# 应用正则替换
+request.replace_header("User-Agent", "Custom Agent/1.0")
+request.replace_body(r'password=[^&]+', 'password=REDACTED')
+```
+
+### 配置管理API
+`config.py`提供以下配置管理方法：
+
+```python
+from config import config
+
+# 获取配置值
+max_depth = config.crawler_max_depth
+proxies = config.crawler_proxies
+
+# 更新配置
+config.set('CRAWLER', 'MaxDepth', 5)
+config.set('CRAWLER', 'Proxies', 'http://127.0.0.1:8080')
+
+# 使用正则匹配器
+matches = config.matcher.find_matches(html_content)
 ```
 
 ### 开发说明

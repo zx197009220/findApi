@@ -1,0 +1,31 @@
+rules:
+- group: FindLink
+  rule:
+  - f_regex: src\s*=\s*["']([\w/\?=#;,\.\-_:&;]+)["']
+    name: src
+    sensitive: false
+  - f_regex: href\s*=\s*["']([\w/\?=#;,\.\-_:&;]+)["']
+    name: href
+    sensitive: false
+  - f_regex: (http[s]?://[\w/\?=#;,\.\-_:&;]+)
+    name: http
+    sensitive: false
+  - f_regex: '["''](\.{0,2}/[\w/\?=#;\.\-_:&;]+)["'']'
+    name: api1
+    sensitive: false
+  - f_regex: '["'']([a-zA-Z0-9\-_]{1,50}/[a-zA-Z0-9\-_]{1,50}/[\w/\?\=#;\.\-_:&;]*)["'']'
+    name: api2
+    sensitive: false
+- group: excludeLink
+  rule:
+  - f_regex: (javascript|data|del|about):.*?
+    name: PseudoProtocols
+    sensitive: false
+  - f_regex: (Y{0,4}/?M{1,2}/D{1,2}/?Y{0,4})
+    name: time
+    sensitive: false
+  - enabled: true
+    f_regex: (text|application|multipart)\/(css|plain|javascript|x-www-form-urlencoded|octet-stream|json|html|form-data)
+    name: contentType
+    sensitive: false
+    type: excludeLink

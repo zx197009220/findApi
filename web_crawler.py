@@ -11,6 +11,7 @@ from httpx import RemoteProtocolError, ConnectError, ReadTimeout
 from link_extractor import parse_links
 from messageparse import message
 from config import config
+from datetime import datetime
 
 
 loggerRequest = setup_logger('requestlog', 'requestlog.log')
@@ -72,7 +73,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                 continue
             url_completed.add(url)
             host = urlparse(url).netloc
-
+            timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
             try:
                 start_time = time.time()
                 headers["host"] = host
@@ -91,18 +92,16 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                 
                 # 将网络请求状态发送到UI队列
                 if ui_queue is not None:
-                    response_time = time.time() - start_time
                     ui_data = {
+                        'timestamp': timestamp,
                         'status': response.status_code,
                         'url': url,
                         'depth': depth,
                         'type': urlFuzz,
-                        'response_time': round(response_time, 2),
                         'content_type': response.headers.get('Content-Type', 'unknown'),
                         'size': len(response.text),
                         'regex_names': regex_names,
                     }
-                    print(f"正在向UI队列发送数据: {ui_data}")  # 调试日志
                     await ui_queue.put(ui_data)
                 
                 await process_queue.put((response.text,url,depth))  # 存放(url, response_content)
@@ -110,6 +109,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                 loggerRequest.info(f"【服务器协议中断】：{rpe} {url}")  # 如连接被服务器主动关闭
                 if ui_queue is not None:
                     await ui_queue.put({
+                        'timestamp': timestamp,
                         'status': 'error',
                         'url': url,
                         'depth': depth,
@@ -121,6 +121,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                 loggerRequest.info(f"【网络层异常】：{ce} {url}")  # 涵盖防火墙、DNS等问题
                 if ui_queue is not None:
                     await ui_queue.put({
+                        'timestamp': timestamp,
                         'status': 'error',
                         'url': url,
                         'depth': depth,
@@ -132,6 +133,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                 loggerRequest.info(f"【连接层异常】：{ce} {url}")  # 如服务器主动断开、防火墙拦截等（网页6）
                 if ui_queue is not None:
                     await ui_queue.put({
+                        'timestamp': timestamp,
                         'status': 'error',
                         'url': url,
                         'depth': depth,
@@ -143,6 +145,7 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                 loggerRequest.info(f"【其他异常：】【{e}】{url}")
                 if ui_queue is not None:
                     await ui_queue.put({
+                        'timestamp': timestamp,
                         'status': 'error',
                         'url': url,
                         'depth': depth,
@@ -156,12 +159,13 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
         await request_queue.put((None, None))
 
 
-async def content_processor(process_queue, request_queue, event):
+async def content_processor(process_queue, request_queue, event, exclude_queue=None):
     """
     内容处理函数
     :param process_queue: 处理队列
     :param request_queue: 请求队列
     :param event: 事件
+    :param exclude_queue: 排除队列，用于向UI发送排除链接信息
     :return:
     """
     while True:
@@ -170,8 +174,25 @@ async def content_processor(process_queue, request_queue, event):
             break  # 接收到 None 作为停止信号
         
         # 解析链接
-        new_urls = await parse_links(response_content, url, depth)
+        new_urls, exclude_matches = await parse_links(response_content, url, depth)
         event.set()
+
+
+        
+        # 处理排除的链接
+        if exclude_matches and exclude_queue is not None:
+
+            timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
+            for excluded_url, rules in exclude_matches.items():
+                # 为每个规则创建一个排除日志条目
+                for rule in rules:
+                    await exclude_queue.put({
+                        'timestamp': timestamp,
+                        'rule': rule,
+                        'link': excluded_url,
+                        'source': url,
+                        'parent_index': depth
+                    })
         
         # 将新URL放回网络请求队列
         for new_url, urlProperty in new_urls.items():
@@ -201,12 +222,13 @@ async def monitor_queues(process_queue, request_queue,event):
 
         await asyncio.sleep(1)  # 短暂休眠后再次检查
 
-async def main(start_url, method, ui_queue=None, max_depth=None, timeout=None, user_agent=None, proxies=None):
+async def main(start_url, method, ui_queue=None, exclude_queue=None, max_depth=None, timeout=None, user_agent=None, proxies=None):
     """
     爬虫主函数
     :param start_url: 起始URL或URL列表
     :param method: 请求方法
     :param ui_queue: UI队列，用于向UI发送网络请求状态和进度信息
+    :param exclude_queue: 排除队列，用于向UI发送排除链接信息
     :param max_depth: 爬取深度，默认为None（使用配置文件中的值）
     :param timeout: 请求超时时间，默认为None（使用默认超时配置）
     :param user_agent: 用户代理，默认为None（使用默认用户代理）
@@ -237,9 +259,8 @@ async def main(start_url, method, ui_queue=None, max_depth=None, timeout=None, u
     producer_task = [asyncio.create_task(network_request(request_queue, process_queue, method, ui_queue)) for _ in range(5)]
 
     # 创建消费者任务
-    # 由于我们已经在network_request中发送了网络请求状态，
-    # 这里不再向UI队列发送数据
-    consumer_task = [asyncio.create_task(content_processor(process_queue, request_queue, event))for _ in range(3)]
+    # 传递UI队列和排除队列给content_processor
+    consumer_task = [asyncio.create_task(content_processor(process_queue, request_queue, event, exclude_queue)) for _ in range(3)]
 
     # 队列监控线程
     monitor = asyncio.create_task(monitor_queues(process_queue, request_queue,event))
@@ -264,17 +285,8 @@ def getstarturls(start_file,context=""):
     return start_url
 
 
-# 运行主函数
-if __name__ == '__main__':
-    start_url = 'https://mall.cgbchina.com.cn'
 
-
-    start_url = getstarturls("start.txt",context = "")
-
-    asyncio.run(main(start_url,"GET"))
-    print(len(url_completed))
-
-# 提供一个函数，供外部调用时创建并传递UI队列
+# 提供一个函数，供外部调用时创建并传递UI队列和排除队列
 def run_crawler_with_ui_queue(start_url, result_queue=None, reset_state=True):
     """
     使用UI队列运行爬虫
@@ -296,6 +308,13 @@ def run_crawler_with_ui_queue(start_url, result_queue=None, reset_state=True):
                 'size': 响应大小（字节）,
                 'error': 错误信息（如果有）
             }
+        exclude_queue: 包含排除链接数据的队列，格式为：
+            {
+                'rule': 排除规则,
+                'link': 被排除的链接,
+                'source': 源URL,
+                'parent_index': 父深度
+            }
         crawler_task: 爬虫任务，可以用于等待爬虫完成
     """
     # 重置爬虫状态
@@ -305,14 +324,16 @@ def run_crawler_with_ui_queue(start_url, result_queue=None, reset_state=True):
 
     async def run_with_queue():
         ui_queue = asyncio.Queue()
+        exclude_queue = asyncio.Queue()
         # 创建一个任务来运行主爬虫函数
         crawler_task = asyncio.create_task(main(
             start_url=start_url,
             method="GET",
-            ui_queue=ui_queue
+            ui_queue=ui_queue,
+            exclude_queue=exclude_queue
         ))
         # 返回队列和任务，让调用者可以从队列中获取数据并等待任务完成
-        return ui_queue, crawler_task
+        return ui_queue, exclude_queue, crawler_task
 
     # 返回协程，让调用者可以在自己的事件循环中运行
     return run_with_queue()

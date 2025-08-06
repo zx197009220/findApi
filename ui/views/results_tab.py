@@ -142,25 +142,65 @@ class ResultsTab(QWidget):
         """根据搜索关键词过滤结果"""
         keyword = self.search_input.text().lower()
 
-        # 过滤链接表格
-        for row in range(self.links_table.rowCount()):
-            hide_row = True
-            for col in range(self.links_table.columnCount()):
-                item = self.links_table.item(row, col)
-                if item and keyword in item.text().lower():
-                    hide_row = False
-                    break
-            self.links_table.setRowHidden(row, hide_row)
+        # 性能优化：如果关键词为空，显示所有行
+        if not keyword:
+            # 显示所有链接行
+            for row in range(self.links_table.rowCount()):
+                self.links_table.setRowHidden(row, False)
+            
+            # 显示所有API行
+            for row in range(self.apis_table.rowCount()):
+                self.apis_table.setRowHidden(row, False)
+            return
 
-        # 过滤API表格
-        for row in range(self.apis_table.rowCount()):
-            hide_row = True
-            for col in range(self.apis_table.columnCount()):
-                item = self.apis_table.item(row, col)
-                if item and keyword in item.text().lower():
+        # 过滤链接表格 - 批量处理以提高性能
+        batch_size = 100
+        links_rows = self.links_table.rowCount()
+        
+        for batch_start in range(0, links_rows, batch_size):
+            batch_end = min(batch_start + batch_size, links_rows)
+            
+            for row in range(batch_start, batch_end):
+                hide_row = True
+                # 优先检查URL列，因为这是最常匹配的列
+                url_item = self.links_table.item(row, 0)
+                if url_item and keyword in url_item.text().lower():
                     hide_row = False
-                    break
-            self.apis_table.setRowHidden(row, hide_row)
+                else:
+                    # 如果URL不匹配，检查其他列
+                    for col in range(1, self.links_table.columnCount()):
+                        item = self.links_table.item(row, col)
+                        if item and keyword in item.text().lower():
+                            hide_row = False
+                            break
+                self.links_table.setRowHidden(row, hide_row)
+            
+            # 处理UI事件，防止界面冻结
+            QApplication.processEvents()
+
+        # 过滤API表格 - 批量处理以提高性能
+        apis_rows = self.apis_table.rowCount()
+        
+        for batch_start in range(0, apis_rows, batch_size):
+            batch_end = min(batch_start + batch_size, apis_rows)
+            
+            for row in range(batch_start, batch_end):
+                hide_row = True
+                # 优先检查URL列
+                url_item = self.apis_table.item(row, 0)
+                if url_item and keyword in url_item.text().lower():
+                    hide_row = False
+                else:
+                    # 如果URL不匹配，检查其他列
+                    for col in range(1, self.apis_table.columnCount()):
+                        item = self.apis_table.item(row, col)
+                        if item and keyword in item.text().lower():
+                            hide_row = False
+                            break
+                self.apis_table.setRowHidden(row, hide_row)
+            
+            # 处理UI事件，防止界面冻结
+            QApplication.processEvents()
 
     def clear_results(self):
         """清空所有结果"""

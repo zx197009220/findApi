@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QTabWidget
 )
 from PySide6.QtCore import Signal
-from ui.views import CrawlerTab, ConfigSettingsTab
+from ui.views import CrawlerTab, ConfigSettingsTab, ExcludeLogsTab
 from ui.views.rules_tab import RulesTab
 from core.crawler_controller import CrawlerController
 
@@ -48,6 +48,13 @@ class MainWindow(QMainWindow):
         self.rules_tab = RulesTab()
         self.rules_tab.status_changed_signal.connect(self.update_status_bar)
         self.tab_widget.addTab(self.rules_tab, "规则")
+
+        # 创建排除日志标签页
+        self.exclude_logs_tab = ExcludeLogsTab()
+        self.tab_widget.addTab(self.exclude_logs_tab, "排除日志")
+        
+        # 连接排除日志信号
+        self.crawler_controller.exclude_log_signal.connect(self.exclude_logs_tab.add_log)
 
         # 将标签页控件添加到主布局
         main_layout.addWidget(self.tab_widget)

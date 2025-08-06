@@ -15,6 +15,7 @@ class CrawlerController(QObject):
     status_changed_signal = Signal(str)
     data_received_signal = Signal(dict)  # 爬虫数据信号，发送爬取到的数据到UI
     log_signal = Signal(str, str, str)  # level, message, timestamp
+    exclude_log_signal = Signal(dict)  # timestamp, rule, link, source, parent_index
 
     def __init__(self):
         super().__init__()
@@ -24,7 +25,9 @@ class CrawlerController(QObject):
         # 爬虫相关
         self.crawler_task = None
         self.ui_queue = None
-        self.queue_monitor = None
+        self.exclude_queue = None
+        self.ui_queue_monitor = None
+        self.exclude_queue_monitor = None
         self.loop = None
         self.crawler_thread = None
 
@@ -86,14 +89,18 @@ class CrawlerController(QObject):
                     reset_state=True
                 )
                 
-                # 在事件循环中运行协程获取UI队列和爬虫任务
-                print("[DEBUG] 开始获取UI队列和爬虫任务...")
-                self.ui_queue, self.crawler_task = self.loop.run_until_complete(coro)
-                print(f"[DEBUG] 获取到UI队列和爬虫任务: {self.crawler_task}")
+                # 在事件循环中运行协程获取UI队列、排除队列和爬虫任务
+                print("[DEBUG] 开始获取UI队列、排除队列和爬虫任务...")
+                self.ui_queue, self.exclude_queue, self.crawler_task = self.loop.run_until_complete(coro)
+                print(f"[DEBUG] 获取到UI队列、排除队列和爬虫任务: {self.crawler_task}")
                 
                 # 启动队列监控
-                self.queue_monitor = self.loop.create_task(self.monitor_ui_queue())
-                print(f"[DEBUG] 队列监控任务已创建: {self.queue_monitor}")
+                self.ui_queue_monitor = self.loop.create_task(self.monitor_ui_queue())
+                print(f"[DEBUG] UI队列监控任务已创建: {self.ui_queue_monitor}")
+                
+                # 启动排除队列监控
+                self.exclude_queue_monitor = self.loop.create_task(self.monitor_exclude_queue())
+                print(f"[DEBUG] 排除队列监控任务已创建: {self.exclude_queue_monitor}")
                 
                 # 添加爬虫任务完成的回调函数
                 def on_crawler_task_done(task):
@@ -186,9 +193,11 @@ class CrawlerController(QObject):
         self.log_signal.emit("INFO", "正在停止爬取", datetime.now().isoformat())
 
         # 先保存任务引用，然后清理引用，防止后续访问已取消的任务
-        queue_monitor = self.queue_monitor
+        ui_queue_monitor = self.ui_queue_monitor
+        exclude_queue_monitor = self.exclude_queue_monitor
         crawler_task = self.crawler_task
-        self.queue_monitor = None
+        self.ui_queue_monitor = None
+        self.exclude_queue_monitor = None
         self.crawler_task = None
         
         # 在事件循环关闭前取消任务
@@ -197,10 +206,15 @@ class CrawlerController(QObject):
             future = concurrent.futures.Future()
             
             def cancel_tasks():
-                # 取消队列监控任务
-                if queue_monitor is not None and not queue_monitor.done() and not queue_monitor.cancelled():
-                    queue_monitor.cancel()
-                    self.log_signal.emit("INFO", "队列监控任务已取消", datetime.now().isoformat())
+                # 取消UI队列监控任务
+                if ui_queue_monitor is not None and not ui_queue_monitor.done() and not ui_queue_monitor.cancelled():
+                    ui_queue_monitor.cancel()
+                    self.log_signal.emit("INFO", "UI队列监控任务已取消", datetime.now().isoformat())
+                
+                # 取消排除队列监控任务
+                if exclude_queue_monitor is not None and not exclude_queue_monitor.done() and not exclude_queue_monitor.cancelled():
+                    exclude_queue_monitor.cancel()
+                    self.log_signal.emit("INFO", "排除队列监控任务已取消", datetime.now().isoformat())
                 
                 # 取消爬虫任务
                 if crawler_task is not None and not crawler_task.done() and not crawler_task.cancelled():
@@ -309,6 +323,43 @@ class CrawlerController(QObject):
             # 记录深度到行号的映射关系
             self.log_signal.emit("DEBUG", f"深度到行号映射: {self.depth_to_row}", datetime.now().isoformat())
             self.log_signal.emit("INFO", "UI队列监控任务已结束", datetime.now().isoformat())
+            
+    async def monitor_exclude_queue(self):
+        """监控排除队列，将排除链接数据发送到UI"""
+        try:
+            while True:
+                try:
+                    # 从排除队列获取数据，设置超时以便能够响应取消
+                    exclude_data = await asyncio.wait_for(self.exclude_queue.get(), timeout=1.0)
+                    
+                    # 如果收到None，表示爬虫已完成
+                    if exclude_data is None:
+                        break
+
+                    # 处理排除链接消息
+                    self.exclude_log_signal.emit(exclude_data)
+
+
+                    # 标记排除队列任务已完成
+                    self.exclude_queue.task_done()
+
+                except asyncio.TimeoutError:
+                    # 检查爬虫任务是否已完成
+                    if self.crawler_task and self.crawler_task.done():
+                        break
+                    # 否则继续等待
+                    continue
+
+        except asyncio.CancelledError:
+            self.log_signal.emit("DEBUG", "排除队列监控任务被取消", datetime.now().isoformat())
+        except Exception as e:
+            self.log_signal.emit(
+                "ERROR",
+                f"排除队列监控出错: {str(e)}",
+                datetime.now().isoformat()
+            )
+        finally:
+            self.log_signal.emit("INFO", "排除队列监控任务已结束", datetime.now().isoformat())
 
 
 if __name__ == '__main__':

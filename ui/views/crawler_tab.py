@@ -225,10 +225,8 @@ class CrawlerTab(QWidget):
         if level == "ERROR":
             self.status_changed_signal.emit(f"错误: {message}")
 
-    def add_link_result(self, url, status_code, type, depth=None, regex_names=None):
+    def add_link_result(self, timestamp,url, status_code, type, depth=None, regex_names=None):
         """添加链接结果到表格"""
-        # 获取当前时间作为时间戳
-        timestamp = QDateTime.currentDateTime().toString("MM-dd hh:mm")
 
         # 创建表格行
         row_position = self.results_table.rowCount()
@@ -346,6 +344,7 @@ class CrawlerTab(QWidget):
         """直接处理从爬虫接收到的数据"""
         try:
             # 获取数据字段
+            timestamp = data.get('timestamp', '')
             url = data.get('url', '')
             status_code = data.get('status', 'N/A')
             depth = data.get('depth', '1')
@@ -353,7 +352,7 @@ class CrawlerTab(QWidget):
             regex_names = data.get('regex_names', [])
             
             # 添加到UI
-            self.add_link_result(url, status_code, type, depth, regex_names)
+            self.add_link_result(timestamp,url, status_code, type, depth, regex_names)
             
         except Exception as e:
             self.add_log("ERROR", f"处理爬虫数据时出错: {e}", datetime.now().isoformat())
