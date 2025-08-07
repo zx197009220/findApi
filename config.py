@@ -197,4 +197,11 @@ class ConfigManager:
 config = ConfigManager()
 
 
+    @property
+    def extractor_Suffix(self):
+        """启用参数字典"""
+        return self.get('EXTRACTOR', 'Suffix', "")
+
+
+
 

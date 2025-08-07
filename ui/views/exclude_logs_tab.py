@@ -70,8 +70,8 @@ class ExcludeLogsModel(QAbstractTableModel):
                 entry = self.log_entries[index.row()]
                 if index.column() == 2:  # 链接列
                     return entry['link']
-                elif index.column() == 1:  # 规则列
-                    return entry['rule']
+                elif index.column() == 3:  # 规则列
+                    return entry['source']
             except IndexError:
                 return None
                 
@@ -165,7 +165,7 @@ class ExcludeLogsTab(QWidget):
         
         # 创建搜索列选择下拉框
         self.column_combo = QComboBox()
-        self.column_combo.addItems(["全部列", "时间", "排除规则", "排除链接", "链接来源", "父链接序号"])
+        self.column_combo.addItems(["全部列", "时间", "排除规则", "排除链接", "链接来源"])
         
         # 创建搜索按钮
         self.search_button = QPushButton("搜索")
@@ -245,13 +245,19 @@ class ExcludeLogsTab(QWidget):
             self.proxy_model.setFilterFixedString("")
             return
 
+        # 获取当前选择的列索引
+        column_index = self.column_combo.currentIndex()
+        # 列索引0是"全部列"，需要设置为-1表示所有列
+        filter_column = column_index - 1 if column_index > 0 else -1
+
         # 使用QRunnable将搜索操作移至后台线程
         from PySide6.QtCore import QRunnable, QThreadPool, QRegularExpression, Slot
 
         class SearchRunnable(QRunnable):
-            def __init__(self, filter_text, parent):
+            def __init__(self, filter_text, filter_column, parent):
                 super().__init__()
                 self.filter_text = filter_text
+                self.filter_column = filter_column
                 self.parent = parent
 
             @Slot()
@@ -266,17 +272,19 @@ class ExcludeLogsTab(QWidget):
                     "apply_filter",
                     Qt.QueuedConnection,
                     Q_ARG(QRegularExpression, regex),
+                    Q_ARG(int, self.filter_column),
                     Q_ARG(str, self.filter_text)
                 )
 
         # 创建并启动搜索任务
-        search_task = SearchRunnable(filter_text, self)
+        search_task = SearchRunnable(filter_text, filter_column, self)
         QThreadPool.globalInstance().start(search_task)
 
-    @Slot(QRegularExpression, str)
-    def apply_filter(self, regex, filter_text):
+    @Slot(QRegularExpression, int, str)
+    def apply_filter(self, regex, filter_column, filter_text):
         """应用过滤器（从后台线程调用）"""
         # 在主线程中应用过滤器
+        self.proxy_model.setFilterKeyColumn(filter_column)
         self.proxy_model.setFilterRegularExpression(regex)
 
         # 如果有搜索文本且不在下拉列表中，添加到下拉列表
