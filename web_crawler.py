@@ -56,107 +56,161 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
         allowed_methods=["GET", "POST"],  # 允许重试的 HTTP 方法
     )
 
+    try:
+        # 防止同时发起过多请求导致服务端压力
+        transport = httpx.AsyncHTTPTransport(retries=retries)
+        proxies = config.crawler_proxies if config.crawler_proxy_switch else None
+        async with httpx.AsyncClient(proxy=proxies, headers=headers, timeout=timeout_config, transport=transport, verify=False) as client:
+            while True:
+                try:
+                    # 使用wait_for以便能够响应取消
+                    url, urlProperty = await asyncio.wait_for(request_queue.get(), timeout=1.0)
+                    if url is None:
+                        break  # 接收到 None 作为停止信号
+                    
+                    urlFuzz, depth, regex_names = urlProperty
+                    if len(depth.split(".")) > int(config.crawler_max_depth):
+                        request_queue.task_done()
+                        continue
+                    if url in url_completed:
+                        request_queue.task_done()
+                        continue
+                    
+                    url_completed.add(url)
+                    host = urlparse(url).netloc
+                    timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
+                    
+                    try:
+                        start_time = time.time()
+                        headers["host"] = host
+                        response = await client.request(method, url, headers=headers, json=body)
 
-    # 防止同时发起过多请求导致服务端压力
-    transport = httpx.AsyncHTTPTransport(retries=retries)
-    proxies = config.crawler_proxies if config.crawler_proxy_switch else None
-    async with httpx.AsyncClient(proxy=proxies, headers=headers, timeout=timeout_config, transport=transport, verify=False) as client:
-        while True:
-            url,urlProperty = await request_queue.get()
-            if url is None:
-                break  # 接收到 None 作为停止信号
-            urlFuzz, depth,regex_names = urlProperty
-            if len(depth.split(".")) > int(config.crawler_max_depth):
-                continue
-            if url in url_completed:
-                request_queue.task_done()
-                continue
-            url_completed.add(url)
-            host = urlparse(url).netloc
-            timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
-            try:
-                start_time = time.time()
-                headers["host"] = host
-                response = await client.request(method, url, headers=headers, json=body)
+                        if urlFuzz == "fuzz" and response.status_code in (404,500):
+                            url = re_remove_url_context.sub(r"\1\2", url)
+                            response = await client.request(method, url, headers=headers, json=body)
 
-                if urlFuzz == "fuzz" and response.status_code in (404,500):
-                    url = re_remove_url_context.sub(r"\1\2", url)
-                    response = await client.request(method, url, headers=headers, json=body)
+                        if 302 == response.status_code:
+                            url = response.headers.get("Location")
+                            response = await client.request(method, url, headers=headers, json=body)
+                        
+                        # 记录日志
+                        loggerRequest.info(f"【{response.status_code}】【{depth}】【{urlFuzz}】: {url}")
+                        
+                        # 将网络请求状态发送到UI队列
+                        if ui_queue is not None:
+                            try:
+                                ui_data = {
+                                    'timestamp': timestamp,
+                                    'status': response.status_code,
+                                    'url': url,
+                                    'depth': depth,
+                                    'type': urlFuzz,
+                                    'content_type': response.headers.get('Content-Type', 'unknown'),
+                                    'size': len(response.text),
+                                    'regex_names': regex_names,
+                                }
+                                await ui_queue.put(ui_data)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                continue
+                        
+                        # 存放(url, response_content)
+                        try:
+                            await process_queue.put((response.text, url, depth))
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            continue
 
-                if 302 == response.status_code:
-                    url = response.headers.get("Location")
-                    response = await client.request(method, url, headers=headers, json=body)
-                
-                # 记录日志
-                loggerRequest.info(f"【{response.status_code}】【{depth}】【{urlFuzz}】: {url}")
-                
-                # 将网络请求状态发送到UI队列
-                if ui_queue is not None:
-                    ui_data = {
-                        'timestamp': timestamp,
-                        'status': response.status_code,
-                        'url': url,
-                        'depth': depth,
-                        'type': urlFuzz,
-                        'content_type': response.headers.get('Content-Type', 'unknown'),
-                        'size': len(response.text),
-                        'regex_names': regex_names,
-                    }
-                    await ui_queue.put(ui_data)
-                
-                await process_queue.put((response.text,url,depth))  # 存放(url, response_content)
-            except RemoteProtocolError as rpe:
-                loggerRequest.info(f"【服务器协议中断】：{rpe} {url}")  # 如连接被服务器主动关闭
-                if ui_queue is not None:
-                    await ui_queue.put({
-                        'timestamp': timestamp,
-                        'status': 'error',
-                        'url': url,
-                        'depth': depth,
-                        'type': urlFuzz,
-                        'regex_names': regex_names,
-                        'error': f"服务器协议中断: {str(rpe)}"
-                    })
-            except ConnectError as ce:
-                loggerRequest.info(f"【网络层异常】：{ce} {url}")  # 涵盖防火墙、DNS等问题
-                if ui_queue is not None:
-                    await ui_queue.put({
-                        'timestamp': timestamp,
-                        'status': 'error',
-                        'url': url,
-                        'depth': depth,
-                        'type': urlFuzz,
-                        'regex_names': regex_names,
-                        'error': f"网络层异常: {str(ce)}"
-                    })
-            except ReadTimeout as ce:
-                loggerRequest.info(f"【连接层异常】：{ce} {url}")  # 如服务器主动断开、防火墙拦截等（网页6）
-                if ui_queue is not None:
-                    await ui_queue.put({
-                        'timestamp': timestamp,
-                        'status': 'error',
-                        'url': url,
-                        'depth': depth,
-                        'type': urlFuzz,
-                        'regex_names': regex_names,
-                        'error': f"连接层异常: {str(ce)}"
-                    })
-            except Exception as e:
-                loggerRequest.info(f"【其他异常：】【{e}】{url}")
-                if ui_queue is not None:
-                    await ui_queue.put({
-                        'timestamp': timestamp,
-                        'status': 'error',
-                        'url': url,
-                        'depth': depth,
-                        'type': urlFuzz,
-                        'regex_names': regex_names,
-                        'error': f"其他异常: {str(e)}"
-                    })
-            finally:
-                request_queue.task_done()
+                    except RemoteProtocolError as rpe:
+                        loggerRequest.info(f"【服务器协议中断】：{rpe} {url}")
+                        if ui_queue is not None:
+                            try:
+                                await ui_queue.put({
+                                    'timestamp': timestamp,
+                                    'status': 'error',
+                                    'url': url,
+                                    'depth': depth,
+                                    'type': urlFuzz,
+                                    'regex_names': regex_names,
+                                    'error': f"服务器协议中断: {str(rpe)}"
+                                })
+                            except:
+                                continue
+                    except ConnectError as ce:
+                        loggerRequest.info(f"【网络层异常】：{ce} {url}")
+                        if ui_queue is not None:
+                            try:
+                                await ui_queue.put({
+                                    'timestamp': timestamp,
+                                    'status': 'error',
+                                    'url': url,
+                                    'depth': depth,
+                                    'type': urlFuzz,
+                                    'regex_names': regex_names,
+                                    'error': f"网络层异常: {str(ce)}"
+                                })
+                            except:
+                                continue
+                    except ReadTimeout as ce:
+                        loggerRequest.info(f"【连接层异常】：{ce} {url}")
+                        if ui_queue is not None:
+                            try:
+                                await ui_queue.put({
+                                    'timestamp': timestamp,
+                                    'status': 'error',
+                                    'url': url,
+                                    'depth': depth,
+                                    'type': urlFuzz,
+                                    'regex_names': regex_names,
+                                    'error': f"连接层异常: {str(ce)}"
+                                })
+                            except:
+                                continue
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        loggerRequest.info(f"【其他异常：】【{e}】{url}")
+                        if ui_queue is not None:
+                            try:
+                                await ui_queue.put({
+                                    'timestamp': timestamp,
+                                    'status': 'error',
+                                    'url': url,
+                                    'depth': depth,
+                                    'type': urlFuzz,
+                                    'regex_names': regex_names,
+                                    'error': f"其他异常: {str(e)}"
+                                })
+                            except:
+                                continue
+                    finally:
+                        request_queue.task_done()
 
-        await request_queue.put((None, None))
+                except asyncio.TimeoutError:
+                    # 检查是否应该继续等待
+                    continue
+                except asyncio.CancelledError:
+                    # 清理资源
+                    if not request_queue.empty():
+                        request_queue.task_done()
+                    raise
+
+    except asyncio.CancelledError:
+        # 确保发送结束信号
+        try:
+            await request_queue.put((None, None))
+        except:
+            pass
+        raise
+    finally:
+        # 确保发送结束信号
+        try:
+            await request_queue.put((None, None))
+        except:
+            pass
+
 
 
 async def content_processor(process_queue, request_queue, event, exclude_queue=None):
@@ -168,40 +222,63 @@ async def content_processor(process_queue, request_queue, event, exclude_queue=N
     :param exclude_queue: 排除队列，用于向UI发送排除链接信息
     :return:
     """
-    while True:
-        response_content, url, depth = await process_queue.get()
-        if response_content is None:
-            break  # 接收到 None 作为停止信号
-        
-        # 解析链接
-        new_urls, exclude_matches = await parse_links(response_content, url, depth)
-        event.set()
+    try:
+        while True:
+            try:
+                # 使用wait_for以便能够响应取消
+                response_content, url, depth = await asyncio.wait_for(process_queue.get(), timeout=1.0)
+                if response_content is None:
+                    break  # 接收到 None 作为停止信号
+                
+                # 解析链接
+                new_urls, exclude_matches = await parse_links(response_content, url, depth)
+                event.set()
 
+                # 处理排除的链接
+                if exclude_matches and exclude_queue is not None:
+                    timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
+                    for excluded_url, rules in exclude_matches.items():
+                        # 为每个规则创建一个排除日志条目
+                        for rule in rules:
+                            try:
+                                await exclude_queue.put({
+                                    'timestamp': timestamp,
+                                    'rule': rule,
+                                    'link': excluded_url,
+                                    'source': url,
+                                    'parent_index': depth
+                                })
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                continue
+                
+                # 将新URL放回网络请求队列
+                for new_url, urlProperty in new_urls.items():
+                    try:
+                        await request_queue.put((new_url, urlProperty))
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        continue
+                
+                process_queue.task_done()
+            except asyncio.TimeoutError:
+                # 检查是否应该继续等待
+                continue
 
-        
-        # 处理排除的链接
-        if exclude_matches and exclude_queue is not None:
+    except asyncio.CancelledError:
+        # 清理资源
+        if not process_queue.empty():
+            process_queue.task_done()
+        raise
+    finally:
+        # 确保发送结束信号
+        try:
+            await process_queue.put((None, None, None))
+        except:
+            pass
 
-            timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
-            for excluded_url, rules in exclude_matches.items():
-                # 为每个规则创建一个排除日志条目
-                for rule in rules:
-                    await exclude_queue.put({
-                        'timestamp': timestamp,
-                        'rule': rule,
-                        'link': excluded_url,
-                        'source': url,
-                        'parent_index': depth
-                    })
-        
-        # 将新URL放回网络请求队列
-        for new_url, urlProperty in new_urls.items():
-            await request_queue.put((new_url, urlProperty))  # 将新 URL 放回网络请求队列
-        
-        process_queue.task_done()
-
-    # 发送结束信号
-    await process_queue.put((None, None, None))
 
 async def monitor_queues(process_queue, request_queue,event):
     await event.wait()

@@ -4,6 +4,7 @@ import concurrent.futures
 import queue
 import threading
 import asyncio
+import time
 from datetime import datetime
 import web_crawler
 from config import config
@@ -122,46 +123,76 @@ class CrawlerController(QObject):
                 print("[DEBUG] 开始运行事件循环，等待爬虫任务完成...")
                 self.loop.run_until_complete(self.crawler_task)
                 print("[DEBUG] 爬虫任务已完成，事件循环退出")
+            except asyncio.CancelledError:
+                print("[INFO] 爬虫任务被正常取消")
+                # 正常取消不需要打印堆栈跟踪
             except Exception as e:
                 print(f"[ERROR] 爬虫执行过程中出错: {e}")
                 import traceback
                 traceback.print_exc()
+                self.log_signal.emit("ERROR", f"爬虫出错并停止: {str(e)}", datetime.now().isoformat())
 
-                # 清理：取消所有未完成的任务（除了爬虫任务和队列监控任务）
-                print("[DEBUG] 开始清理其他未完成的任务...")
+            # 分阶段关闭流程
+            try:
+                # 第一阶段：取消所有任务
+                print("[DEBUG] 开始取消所有任务...")
                 pending = asyncio.all_tasks(self.loop)
-                tasks_to_cancel = []
                 for task in pending:
-                    if (not task.done() and 
-                        not task.cancelled() and 
-                        task != self.crawler_task and 
-                        task != self.queue_monitor):
-                        tasks_to_cancel.append(task)
+                    if not task.done() and not task.cancelled():
                         task.cancel()
-                        print(f"[DEBUG] 取消了任务: {task}")
-                
-                # 等待被取消的任务完成
-                if tasks_to_cancel:
-                    print(f"[DEBUG] 等待 {len(tasks_to_cancel)} 个被取消的任务完成...")
-                    self.loop.run_until_complete(asyncio.gather(*tasks_to_cancel, return_exceptions=True))
-                    print("[DEBUG] 所有被取消的任务已完成")
-                
-                # 关闭事件循环
-                if not self.loop.is_closed():
-                    print("[DEBUG] 关闭事件循环")
-                    self.loop.close()
-                    print("[DEBUG] 事件循环已关闭")
+                        print(f"[DEBUG] 已取消任务: {task}")
+
+                # 第二阶段：等待任务完成（最多重试3次）
+                max_retries = 3
+                for attempt in range(max_retries):
+                    # 添加短暂延迟让取消操作生效
+                    if attempt > 0:
+                        time.sleep(0.1)
+                    
+                    pending = [t for t in asyncio.all_tasks(self.loop) 
+                             if not t.done() and not t.cancelled()]
+                    if not pending:
+                        print("[DEBUG] 所有任务已完成")
+                        break
+                    
+                    print(f"[DEBUG] 等待任务完成 (尝试 {attempt + 1}/{max_retries})...")
+                    try:
+                        # 区分任务状态，使用更安全的等待方式
+                        done, pending = self.loop.run_until_complete(
+                            asyncio.wait(pending, timeout=1.0)
+                        )
+                        if pending:
+                            print(f"[DEBUG] 仍有 {len(pending)} 个任务未完成")
+                    except asyncio.CancelledError:
+                        print("[DEBUG] 任务已被取消，继续等待")
+                    except Exception as e:
+                        print(f"[WARNING] 等待任务时出错: {e}")
+                        # 记录更详细的错误信息
+                        if isinstance(e, RuntimeError) and "Event loop stopped" in str(e):
+                            print("[DEBUG] 事件循环状态异常，尝试恢复")
+
+
+                # 第三阶段：强制关闭未完成的任务
+                if attempt == max_retries - 1 and pending:
+                    print("[WARNING] 仍有未完成的任务，强制关闭...")
+            except Exception as e:
+                print(f"[ERROR] 关闭过程中出错: {e}")
+                import traceback
+                traceback.print_exc()
+
+
+
+
                 
                 # 标记爬虫已停止
                 self.is_running = False
                 self.status_changed_signal.emit("爬虫已停止")
                 self.log_signal.emit("INFO", "爬取已完成", datetime.now().isoformat())
                 print("[DEBUG] 爬虫线程函数执行完毕")
-            except Exception as e:
-                print(f"[ERROR] 爬虫线程清理过程中出错: {e}")
-                import traceback
-                traceback.print_exc()
-                
+
+
+
+
                 # 确保在出错时也能正确关闭事件循环和标记爬虫已停止
                 if self.loop and not self.loop.is_closed():
                     try:
@@ -186,83 +217,118 @@ class CrawlerController(QObject):
     def stop_crawler(self):
         """停止爬虫"""
         if not self.is_running:
+            self.log_signal.emit("DEBUG", "爬虫未运行，无需停止", datetime.now().isoformat())
             return
 
-        self.is_running = False
-        self.status_changed_signal.emit("正在停止爬虫...")
-        self.log_signal.emit("INFO", "正在停止爬取", datetime.now().isoformat())
+        try:
+            self.is_running = False
+            self.status_changed_signal.emit("正在停止爬虫...")
+            self.log_signal.emit("INFO", "开始停止爬虫流程", datetime.now().isoformat())
 
-        # 先保存任务引用，然后清理引用，防止后续访问已取消的任务
-        ui_queue_monitor = self.ui_queue_monitor
-        exclude_queue_monitor = self.exclude_queue_monitor
-        crawler_task = self.crawler_task
-        self.ui_queue_monitor = None
-        self.exclude_queue_monitor = None
-        self.crawler_task = None
-        
-        # 在事件循环关闭前取消任务
-        if self.loop and not self.loop.is_closed():
-            # 使用Future对象来同步任务取消
-            future = concurrent.futures.Future()
+            # 阶段1: 保存任务引用并清理引用
+            ui_queue_monitor = self.ui_queue_monitor
+            exclude_queue_monitor = self.exclude_queue_monitor
+            crawler_task = self.crawler_task
+            self.ui_queue_monitor = None
+            self.exclude_queue_monitor = None
+            self.crawler_task = None
             
-            def cancel_tasks():
-                # 取消UI队列监控任务
-                if ui_queue_monitor is not None and not ui_queue_monitor.done() and not ui_queue_monitor.cancelled():
-                    ui_queue_monitor.cancel()
-                    self.log_signal.emit("INFO", "UI队列监控任务已取消", datetime.now().isoformat())
+            # 阶段2: 取消所有任务
+            if self.loop and not self.loop.is_closed():
+                # 使用Future对象来同步任务取消
+                future = concurrent.futures.Future()
                 
-                # 取消排除队列监控任务
-                if exclude_queue_monitor is not None and not exclude_queue_monitor.done() and not exclude_queue_monitor.cancelled():
-                    exclude_queue_monitor.cancel()
-                    self.log_signal.emit("INFO", "排除队列监控任务已取消", datetime.now().isoformat())
+                def cancel_tasks():
+                    try:
+                        self.log_signal.emit("DEBUG", "开始取消任务", datetime.now().isoformat())
+                        
+                        # 取消UI队列监控任务
+                        if ui_queue_monitor is not None and not ui_queue_monitor.done() and not ui_queue_monitor.cancelled():
+                            ui_queue_monitor.cancel()
+                            self.log_signal.emit("INFO", "UI队列监控任务已取消", datetime.now().isoformat())
+                        
+                        # 取消排除队列监控任务
+                        if exclude_queue_monitor is not None and not exclude_queue_monitor.done() and not exclude_queue_monitor.cancelled():
+                            exclude_queue_monitor.cancel()
+                            self.log_signal.emit("INFO", "排除队列监控任务已取消", datetime.now().isoformat())
+                        
+                        # 取消爬虫任务
+                        if crawler_task is not None and not crawler_task.done() and not crawler_task.cancelled():
+                            crawler_task.cancel()
+                            self.log_signal.emit("INFO", "爬虫任务已取消", datetime.now().isoformat())
+                        
+                        # 取消所有未完成的任务
+                        pending = asyncio.all_tasks(self.loop)
+                        tasks_cancelled = 0
+                        for task in pending:
+                            if not task.done() and not task.cancelled():
+                                task.cancel()
+                                tasks_cancelled += 1
+                        
+                        self.log_signal.emit("INFO", f"已取消{tasks_cancelled}个后台任务", datetime.now().isoformat())
+                        
+                        # 标记Future为完成
+                        future.set_result(None)
+                    except Exception as e:
+                        self.log_signal.emit("ERROR", f"取消任务时出错: {str(e)}", datetime.now().isoformat())
+                        future.set_exception(e)
                 
-                # 取消爬虫任务
-                if crawler_task is not None and not crawler_task.done() and not crawler_task.cancelled():
-                    crawler_task.cancel()
-                    self.log_signal.emit("INFO", "爬虫任务已取消", datetime.now().isoformat())
+                # 在事件循环线程中执行取消操作
+                self.loop.call_soon_threadsafe(cancel_tasks)
                 
-                # 取消所有未完成的任务
-                pending = asyncio.all_tasks(self.loop)
-                for task in pending:
-                    if not task.done() and not task.cancelled():
-                        task.cancel()
-                
-                # 标记Future为完成
-                future.set_result(None)
-            
-            # 在事件循环线程中执行取消操作
-            self.loop.call_soon_threadsafe(cancel_tasks)
-            
-            # 等待取消操作完成
-            future.result(timeout=5)  # 设置超时，避免无限等待
-            
-            # 停止事件循环
-            if self.loop.is_running():
-                self.loop.call_soon_threadsafe(self.loop.stop)
-                self.log_signal.emit("INFO", "事件循环停止请求已发送", datetime.now().isoformat())
-            else:
-                self.log_signal.emit("INFO", "事件循环未运行，无需停止", datetime.now().isoformat())
+                # 等待取消操作完成
+                try:
+                    future.result(timeout=5)
+                    self.log_signal.emit("DEBUG", "所有任务取消完成", datetime.now().isoformat())
+                except concurrent.futures.TimeoutError:
+                    self.log_signal.emit("WARNING", "取消任务超时", datetime.now().isoformat())
+                except Exception as e:
+                    self.log_signal.emit("ERROR", f"等待任务取消时出错: {str(e)}", datetime.now().isoformat())
 
-        # 等待爬虫线程结束
-        if hasattr(self, 'crawler_thread') and self.crawler_thread and self.crawler_thread.is_alive():
-            self.crawler_thread.join(timeout=5)
-            if self.crawler_thread.is_alive():
-                self.log_signal.emit("WARNING", "爬虫线程未能在超时时间内结束", datetime.now().isoformat())
+                # 阶段3: 停止事件循环
+                try:
+                    if self.loop.is_running():
+                        self.log_signal.emit("DEBUG", "正在停止事件循环", datetime.now().isoformat())
+                        self.loop.call_soon_threadsafe(self.loop.stop)
+                        self.log_signal.emit("INFO", "事件循环停止请求已发送", datetime.now().isoformat())
+                    else:
+                        self.log_signal.emit("INFO", "事件循环未运行，无需停止", datetime.now().isoformat())
+                except Exception as e:
+                    self.log_signal.emit("ERROR", f"停止事件循环时出错: {str(e)}", datetime.now().isoformat())
 
-        # 重置爬虫相关资源
-        self.crawler_task = None
-        self.ui_queue = None
+            # 阶段4: 等待爬虫线程结束
+            if hasattr(self, 'crawler_thread') and self.crawler_thread and self.crawler_thread.is_alive():
+                self.log_signal.emit("DEBUG", "等待爬虫线程结束", datetime.now().isoformat())
+                self.crawler_thread.join(timeout=5)
+                if self.crawler_thread.is_alive():
+                    self.log_signal.emit("WARNING", "爬虫线程未能在超时时间内结束", datetime.now().isoformat())
+                else:
+                    self.log_signal.emit("INFO", "爬虫线程已正常结束", datetime.now().isoformat())
 
-        # 确保事件循环被关闭
-        if self.loop and not self.loop.is_closed():
-            self.loop.close()
+            # 阶段5: 清理资源
+            self.log_signal.emit("DEBUG", "开始清理资源", datetime.now().isoformat())
+            self.crawler_task = None
+            self.ui_queue = None
 
-        self.loop = None
+            # 确保事件循环被关闭
+            if self.loop and not self.loop.is_closed():
+                try:
+                    self.loop.close()
+                    self.log_signal.emit("DEBUG", "事件循环已关闭", datetime.now().isoformat())
+                except Exception as e:
+                    self.log_signal.emit("ERROR", f"关闭事件循环时出错: {str(e)}", datetime.now().isoformat())
 
-        # 不再需要向结果队列发送None
+            self.loop = None
+            self.log_signal.emit("DEBUG", "资源清理完成", datetime.now().isoformat())
 
-        self.status_changed_signal.emit("爬虫已停止")
-        self.log_signal.emit("INFO", "爬取已停止", datetime.now().isoformat())
+            self.status_changed_signal.emit("爬虫已停止")
+            self.log_signal.emit("INFO", "爬虫已完全停止", datetime.now().isoformat())
+
+        except Exception as e:
+            self.log_signal.emit("ERROR", f"停止爬虫过程中发生未捕获的异常: {str(e)}", datetime.now().isoformat())
+            self.status_changed_signal.emit("爬虫停止时出错")
+            raise
+
 
 
     def has_results(self):
