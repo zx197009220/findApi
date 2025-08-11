@@ -1,16 +1,12 @@
 import re
 from urllib.parse import urlparse, urljoin
 import os
-from config import config
-from log import setup_logger
+from config import ConfigManager
 
-loggerLink = setup_logger('matchlinks', 'matchlinks.log',add_console_handler=False)
-loggerExcluelink = setup_logger('excludeLink', 'excludelinks.log',add_console_handler=False)
+config = ConfigManager()
 newline_pattern = re.compile(r'\n')
 
 #正则排除Content-Type
-content_type_pattern = re.compile(r'\b(text|application|multipart)\/(css|plain|javascript|x-www-form-urlencoded|octet-stream|json|html|form-data)\b')
-
 #匹配=号参数，或者/:item类型参数
 param_regex = re.compile(r'(\w+)=([\w]*)|/:(\w+)')
 # 输入参数yd03
@@ -36,8 +32,6 @@ async def parse_links(html_content,source_url,depth_Parent=0):
     urls = {}
 
     depth_Child = 0
-    loggerLink.info(f"【send request】【{depth_Parent}】{source_url}")
-    loggerExcluelink.info(f"【send request】【{depth_Parent}】{source_url}")
     for link, regex_names in matches.items():
 
         url,url_status= normalize_link(link,source_url)
@@ -89,13 +83,11 @@ def is_exclusion_rules(url,url_status,source_url):
     domain = parsed_url.netloc
     # 是否是目标域名
     if not is_subdomain(domain, config.crawler_sub_domain):
-        loggerExcluelink.info(f"【{url_status}】{url}")
         return config.crawler_sub_domain
 
     # 获取链接的扩展名
     extension = get_extension(parsed_url.path)
-    if extension.lower() in [".css",".png",".jpg",".ico",".jepg",".exe",".zip",".dmg",".pdf"]:
-        loggerExcluelink.info(f"【{url_status}】{url}")
+    if extension.lower() in config.extractor_Suffix.split(","):
         return extension.lower()
 
     return False
@@ -105,7 +97,7 @@ def normalize_link(link,source_url):
     if link.startswith("http"):
         url_status = "source"
         url = link
-    elif link.startswith("//") and is_subdomain(link, config.crawler_sub_domain):
+    elif link.startswith("//"):
         url_status = "source"
         url = urlparse(source_url).scheme+":"+link
     else:

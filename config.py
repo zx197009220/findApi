@@ -54,6 +54,10 @@ class RegexMatcher:
         return results,exclude_results
 
 def loadParamData(config_path="paramdict.yml",ParamSwitch=False):
+    # 如果是相对路径，转换为基于当前脚本所在目录的绝对路径
+    if not os.path.isabs(config_path):
+        config_path = os.path.join(os.path.dirname(__file__), config_path)
+    
     if os.path.exists(config_path) and ParamSwitch:
         with open(config_path, "r", encoding="utf-8") as f:
             param_data = yaml.safe_load(f)
@@ -63,11 +67,12 @@ def loadParamData(config_path="paramdict.yml",ParamSwitch=False):
 
 def initialize_config(config_path="config.ini"):
     """初始化配置文件，若不存在则创建默认配置"""
+    config_path = os.path.abspath(config_path)
     if not os.path.exists(config_path):
     # if True:
         create_default_config(config_path)
     config = configparser.RawConfigParser(allow_no_value=True)
-    config.read("config.ini", encoding='utf-8')
+    config.read(config_path, encoding='utf-8')
     return config
 
 def create_default_config(config_path):
@@ -108,6 +113,7 @@ def create_default_config(config_path):
 class ConfigManager:
     _instance = None
     _lock = Lock()
+    _config_path = os.path.abspath("config.ini")
     
     def __new__(cls):
         if cls._instance is None:
@@ -119,10 +125,10 @@ class ConfigManager:
     
     def _init_config(self):
         """初始化配置"""
-        if not os.path.exists("config.ini"):
-            create_default_config("config.ini")
+        if not os.path.exists(self._config_path):
+            create_default_config(self._config_path)
         self._config = configparser.RawConfigParser(allow_no_value=True)
-        self._config.read("config.ini", encoding='utf-8')
+        self._config.read(self._config_path, encoding='utf-8')
         rules_path = os.path.join(os.path.dirname(__file__), 'rules.yml')
         self._matcher = RegexMatcher(rules_path)
         self._param_data = loadParamData(ParamSwitch=self.get_boolean('CRAWLER','ParamSwitch'))
@@ -154,7 +160,7 @@ class ConfigManager:
     
     def _save_config(self):
         """保存配置到文件"""
-        with open("config.ini", 'w', encoding='utf-8') as f:
+        with open(self._config_path, 'w', encoding='utf-8') as f:
             self._config.write(f)
     
     @property
@@ -192,10 +198,10 @@ class ConfigManager:
         """获取爬虫代理设置"""
         return self.get_boolean('CRAWLER', 'ProxySwitch', False)
 
-
-# 配置单例实例
-config = ConfigManager()
-
+    @property
+    def crawler_param_switch(self):
+        """获取爬虫参数字典开关"""
+        return self.get_boolean('CRAWLER', 'ParamSwitch', False)
 
     @property
     def extractor_Suffix(self):

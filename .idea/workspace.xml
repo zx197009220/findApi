@@ -4,10 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="56a1e781-4333-4df2-bc24-e7f4f1e722b4" name="更改" comment="第一版 v0.1.0">
+    <list default="true" id="56a1e781-4333-4df2-bc24-e7f4f1e722b4" name="更改" comment="优化输入框ui">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ui/views/config_settings_tab.py" beforeDir="false" afterPath="$PROJECT_DIR$/ui/views/config_settings_tab.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/core/crawler_controller.py" beforeDir="false" afterPath="$PROJECT_DIR$/core/crawler_controller.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -303,7 +302,15 @@
       <option name="project" value="LOCAL" />
       <updated>1754637835360</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="优化输入框ui">
+      <option name="closed" value="true" />
+      <created>1754892088594</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1754892088594</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -330,16 +337,12 @@
     <MESSAGE value="新增排除规则日志展示" />
     <MESSAGE value="解决停止爬取，事件循环异常关闭" />
     <MESSAGE value="第一版 v0.1.0" />
-    <option name="LAST_COMMIT_MESSAGE" value="第一版 v0.1.0" />
+    <MESSAGE value="优化输入框ui" />
+    <option name="LAST_COMMIT_MESSAGE" value="优化输入框ui" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
       <breakpoints>
-        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
-          <url>file://$PROJECT_DIR$/demo.py</url>
-          <line>3</line>
-          <option name="timeStamp" value="11" />
-        </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/ui/views/config_settings_tab.py</url>
           <option name="timeStamp" value="12" />
@@ -349,7 +352,7 @@
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/findApi$web_crawler.coverage" NAME="web_crawler 覆盖结果" MODIFIED="1753337866669" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/findApi$run_ui.coverage" NAME="run_ui 覆盖结果" MODIFIED="1754638437954" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/findApi$run_ui.coverage" NAME="run_ui 覆盖结果" MODIFIED="1754893361844" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/findApi$crawler_controller.coverage" NAME="crawler_controller 覆盖结果" MODIFIED="1754364240638" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/core" />
     <SUITE FILE_PATH="coverage/findApi$run_ui_demo.coverage" NAME="run_ui_demo 覆盖结果" MODIFIED="1753265074910" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/findApi$demo.coverage" NAME="demo 覆盖结果" MODIFIED="1754535320841" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />

@@ -1,12 +1,12 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox, QSplitter,
-    QTreeWidget, QTreeWidgetItem, QMenu, QCheckBox
+    QTreeWidget, QTreeWidgetItem, QMenu, QCheckBox, QRadioButton, QTextEdit
 )
-from PySide6.QtCore import Qt, Signal, Slot, QDateTime
-from PySide6.QtGui import QGuiApplication, QAction
+from PySide6.QtCore import Qt, Signal, Slot, QDateTime, QEvent, QTimer
+from PySide6.QtGui import QGuiApplication, QAction, QTextBlockFormat, QTextCursor, QFontMetrics
 from datetime import datetime  # 导入datetime模块
-from config import config
+from config import ConfigManager
 
 class CrawlerTab(QWidget):
     """爬虫标签页，包含爬虫控制界面、结果显示表格和链接树状预览"""
@@ -18,6 +18,7 @@ class CrawlerTab(QWidget):
 
     def __init__(self, crawler_controller):
         super().__init__()
+        self.config = ConfigManager()
         self.crawler_controller = crawler_controller
         # 初始化深度序号计数器
         self.depth_counters = {"1": 0}
@@ -81,11 +82,39 @@ class CrawlerTab(QWidget):
         top_layout = QHBoxLayout(top_control_widget)
         top_layout.setContentsMargins(0, 0, 0, 0)
 
+        # 创建URL输入标签
+        url_label = QLabel("URL输入:")
+
+        self._expand_timer = QTimer()
+        self._expand_timer.setSingleShot(True)
+        self._expand_timer.timeout.connect(self._do_expand)
+        
         # 创建URL输入框
-        url_label = QLabel("起始URL:")
-        self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("请输入起始URL (例如: https://example.com)")
+        self.url_input = QTextEdit()  # 使用QTextEdit支持多行输入
+        self.url_input.setAcceptRichText(False)  # 禁止富文本输入
+        self.url_input.setLineWrapMode(QTextEdit.NoWrap)  # 不自动换行
+        self.url_input.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.url_input.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.url_input.cursorPositionChanged.connect(
+            lambda: self.url_input.ensureCursorVisible()
+        )
+        self.url_input.setPlaceholderText("请输入URL，每行一个 (例如:https://example.com\nhttps://example.org)")
         self.url_input.setMinimumWidth(400)
+        self.url_input.setMaximumHeight(35)  # 默认显示单行高度
+
+
+        # 设置样式表以增加行间距
+        self.url_input.setStyleSheet("""
+            QTextEdit {
+                font-size: 10pt;
+                padding: 4px;
+            }
+        """)
+        
+        # 安装事件过滤器以处理鼠标悬停事件
+        self.url_input.installEventFilter(self)
+
+        # 单选按钮已替换为开关，不需要连接信号
 
         # 创建代理启用复选框
         self.proxy_checkbox = QCheckBox("启用代理")
@@ -169,9 +198,17 @@ class CrawlerTab(QWidget):
         # 连接爬虫控制信号
         self.connect_crawler_signals()
 
+
+
     def start_crawler(self):
         """开始爬取"""
-        url = self.url_input.text().strip()
+        url_text = self.url_input.toPlainText().strip()
+        if not url_text:
+            self.update_status("请输入有效的URL")
+            return
+        
+        # 批量模式：将文本分割成URL列表
+        url = [line.strip() for line in url_text.split('\n') if line.strip()]
         if not url:
             self.update_status("请输入有效的URL")
             return
@@ -187,7 +224,7 @@ class CrawlerTab(QWidget):
         self.clear_results()
 
         # 获取配置选项
-        config.set('CRAWLER', 'ProxySwitch', self.proxy_checkbox.isChecked())
+        self.config.set('CRAWLER', 'ProxySwitch', self.proxy_checkbox.isChecked())
 
         # 调用爬虫控制器的启动方法
         self.crawler_controller.start_crawler(url)
@@ -366,3 +403,58 @@ class CrawlerTab(QWidget):
                 clipboard = QGuiApplication.clipboard()
                 clipboard.setText(url_item.text())
                 self.status_changed_signal.emit(f"已复制URL: {url_item.text()}")
+
+    def eventFilter(self, obj, event):
+        """事件过滤器，处理URL输入框的鼠标悬停事件"""
+        if obj == self.url_input:
+            if event.type() == QEvent.Type.Enter:
+                # 鼠标进入输入框，增加高度以显示多行
+                self._expand_timer.start(300)
+                return True
+            elif event.type() == QEvent.Type.Leave:
+                # 鼠标离开输入框，恢复单行高度
+                self._expand_timer.stop()
+                self._do_collapse()
+                return True
+        
+        # 对于其他事件，让父类处理
+        return super().eventFilter(obj, event)
+
+    def _do_expand(self):
+        """展开：恢复正常行距"""
+        fmt = QTextBlockFormat()
+        fmt.setLineHeight(25.0, 2)  # 100 % 行距
+        fmt.setTopMargin(0)
+        fmt.setBottomMargin(0)
+
+        cur = QTextCursor(self.url_input.document())
+        cur.select(QTextCursor.Document)
+        cur.mergeBlockFormat(fmt)
+
+        self.url_input.setFixedHeight(100)
+
+    def _do_collapse(self):
+        """折叠：行距/段间距清零 + 文档顶端清零 + 高度固定 35px"""
+        # 1. 段前/段后/行距清零
+        fmt = QTextBlockFormat()
+        fmt.setLineHeight(25.0, 2)  # 25 px 行距
+        fmt.setTopMargin(0)
+        fmt.setBottomMargin(0)
+
+        cur = QTextCursor(self.url_input.document())
+        cur.select(QTextCursor.Document)
+        cur.mergeBlockFormat(fmt)
+
+        # 2. 文档顶端 margin 清零
+        doc = self.url_input.document()
+        root_frame_fmt = doc.rootFrame().frameFormat()
+        root_frame_fmt.setTopMargin(0)
+        root_frame_fmt.setBottomMargin(0)
+        doc.rootFrame().setFrameFormat(root_frame_fmt)
+
+        # 3. 滚动到最顶端
+        self.url_input.verticalScrollBar().setValue(0)
+
+        # 4. 固定高度
+        self.url_input.setFixedHeight(35)
+        self.url_input.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)

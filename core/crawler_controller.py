@@ -7,7 +7,7 @@ import asyncio
 import time
 from datetime import datetime
 import web_crawler
-from config import config
+from config import ConfigManager
 
 
 class CrawlerController(QObject):
@@ -20,6 +20,7 @@ class CrawlerController(QObject):
 
     def __init__(self):
         super().__init__()
+        self.config = ConfigManager()
         self.is_running = False
         self.depth_to_row = {}  # 用于存储深度和行号的映射关系
 
@@ -67,7 +68,7 @@ class CrawlerController(QObject):
 
         # 记录配置信息
         self.log_signal.emit("INFO", 
-                           f"配置信息: 最大深度={config.crawler_max_depth}, 最大重试={config.crawler_max_retries}",
+                           f"配置信息: 最大深度={self.config.crawler_max_depth}, 最大重试={self.config.crawler_max_retries}",
                            datetime.now().isoformat())
 
         # 创建新的事件循环
@@ -108,10 +109,22 @@ class CrawlerController(QObject):
                     try:
                         task.result()  # 获取结果，如果有异常会在这里抛出
                         print("[DEBUG] 爬虫任务已完成")
+                        # 更新爬虫状态并发送状态更新信号
+                        self.is_running = False
+                        self.status_changed_signal.emit("爬虫已完成")
+                        self.log_signal.emit("INFO", "爬取已完成", datetime.now().isoformat())
                     except asyncio.CancelledError:
                         print("[DEBUG] 爬虫任务被取消")
+                        # 更新爬虫状态并发送状态更新信号
+                        self.is_running = False
+                        self.status_changed_signal.emit("爬虫已停止")
+                        self.log_signal.emit("INFO", "爬虫已被取消", datetime.now().isoformat())
                     except Exception as e:
                         print(f"[ERROR] 爬虫任务出错: {e}")
+                        # 更新爬虫状态并发送状态更新信号
+                        self.is_running = False
+                        self.status_changed_signal.emit("爬虫出错并停止")
+                        self.log_signal.emit("ERROR", f"爬虫出错并停止: {str(e)}", datetime.now().isoformat())
                     finally:
                         print("[DEBUG] 爬虫任务回调执行完毕")
                 
@@ -179,30 +192,19 @@ class CrawlerController(QObject):
                 print(f"[ERROR] 关闭过程中出错: {e}")
                 import traceback
                 traceback.print_exc()
-
-
-
-
-                
+            finally:
                 # 标记爬虫已停止
                 self.is_running = False
                 self.status_changed_signal.emit("爬虫已停止")
                 self.log_signal.emit("INFO", "爬取已完成", datetime.now().isoformat())
                 print("[DEBUG] 爬虫线程函数执行完毕")
 
-
-
-
-                # 确保在出错时也能正确关闭事件循环和标记爬虫已停止
+                # 确保在出错时也能正确关闭事件循环
                 if self.loop and not self.loop.is_closed():
                     try:
                         self.loop.close()
                     except:
                         pass
-                
-                self.is_running = False
-                self.status_changed_signal.emit("爬虫出错并停止")
-                self.log_signal.emit("ERROR", f"爬虫出错并停止: {str(e)}", datetime.now().isoformat())
 
 
         # 启动爬虫线程

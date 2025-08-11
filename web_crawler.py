@@ -10,9 +10,10 @@ from urllib3.util.retry import Retry
 from httpx import RemoteProtocolError, ConnectError, ReadTimeout
 from link_extractor import parse_links
 from messageparse import message
-from config import config
+from config import ConfigManager
 from datetime import datetime
 
+config = ConfigManager()
 
 loggerRequest = setup_logger('requestlog', 'requestlog.log')
 # 去除url上下文
@@ -81,7 +82,6 @@ async def network_request(request_queue, process_queue, method="get", ui_queue=N
                     timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
                     
                     try:
-                        start_time = time.time()
                         headers["host"] = host
                         response = await client.request(method, url, headers=headers, json=body)
 

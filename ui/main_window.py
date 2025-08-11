@@ -3,8 +3,7 @@ from PySide6.QtWidgets import (
     QTabWidget
 )
 from PySide6.QtCore import Signal
-from ui.views import CrawlerTab, ConfigSettingsTab, ExcludeLogsTab
-from ui.views.rules_tab import RulesTab
+from ui.views import CrawlerTab, ConfigSettingsTab, ExcludeLogsTab, RulesTab
 from core.crawler_controller import CrawlerController
 
 class MainWindow(QMainWindow):
