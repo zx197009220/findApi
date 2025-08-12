@@ -2,10 +2,6 @@ GET / HTTP/1.1
 Host: www.baidu.com
 Accept: */*
 Cookie: JSESSIONID=0000pXp1k1wcpBgePGogLGUnn4Z:-1; Path=/; HttpOnly
-uniqueNumber: 202508110948022554
-mobileid: 184ac20a-7cbe-403d-b13b-c869b996b784
-designType: 02
-XYZ-TraceWork-Req-Method: 
 Content-Type: application/json; charset=utf-8
 Connection: keep-alive
 Accept-Encoding: gzip, deflate, br
